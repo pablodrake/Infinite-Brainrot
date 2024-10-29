@@ -1,1 +1,6 @@
 tags.txt
+videos/*.mp4
+cookies.txt
+video_generation.log
+downloaded_files/*
+output/*

@@ -1,3 +1,4 @@
+from altair import Key
 from seleniumbase import SB
 import html
 from pathlib import Path
@@ -9,20 +10,77 @@ import os
 import subprocess
 import random
 from faster_whisper import WhisperModel
+import logging
+from selenium.webdriver.common.keys import Keys
 
-# Add this near the top of the script, after the imports
-# You can change this value to generate a different number of videos
+# Constants
 NUM_VIDEOS_TO_GENERATE = 5
+VIDEO_SOURCE_PATH = "./videos/minecraft.mp4"
+CHROME_USER_DATA_DIR = "/home/pdaloxd/.config/google-chrome/Default"
+SUBREDDIT_DEFAULT_URL = "https://www.reddit.com/r/AITAH/rising/"
+VAAPI_DEVICE = "/dev/dri/renderD128"
+WHISPER_MODEL = None
+final_video_paths = []
 
-# Set up directory based on current date
+# Video encoding settings
+VIDEO_ENCODING = {
+    'QP': '23',
+    'BITRATE': '5M',
+    'MAXRATE': '5M',
+    'BUFSIZE': '10M'
+}
+
+# Subtitle styling
+SUBTITLE_STYLE = (
+    'Fontsize=24,Alignment=10,MarginV=50,'
+    'PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,'
+    'BorderStyle=1,Outline=2'
+)
+
+# Reddit acronym mappings
+REDDIT_ACRONYMS = {
+    "AITAH": "Am I The Ahole",
+    "AITA": "Am I The Ahole",
+    "WIBTA": "Would I Be The Ahole",
+    "YTA": "You're The Ahole",
+    "NTA": "Not The Ahole",
+    "NAH": "No Aholes Here",
+    "ESH": "Everyone Sucks Here",
+    "TLDR": "Too Long Didn't Read",
+}
+
+# Set up logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('./video_generation.log', mode='w'),
+        logging.StreamHandler()
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# Set up directories based on current date
 date_today = datetime.date.today().strftime("%Y-%m-%d")
 output_dir = Path(f"./output/{date_today}")
-# Create the directory if it doesn't exist
+final_dir = output_dir / "final"
+# Create the directories if they don't exist
 output_dir.mkdir(parents=True, exist_ok=True)
+final_dir.mkdir(parents=True, exist_ok=True)
+logger.info(f"Created output directories: {output_dir}, {final_dir}")
+
+
+# Add this initialization function
+def initialize_whisper_model():
+    global WHISPER_MODEL
+    if WHISPER_MODEL is None:
+        logger.info("Loading Whisper model...")
+        WHISPER_MODEL = WhisperModel("base", device="auto", compute_type="auto")
+    return WHISPER_MODEL
 
 
 def overlay_screenshot(input_video, screenshot_path, output_video):
-    print("\nOverlaying screenshot on video...")
+    logger.info("Overlaying screenshot on video...")
     temp_output = output_video.replace('.mp4', '_temp.mp4')
 
     # Step 1: Overlay screenshot using software processing
@@ -68,11 +126,11 @@ def overlay_screenshot(input_video, screenshot_path, output_video):
     # Clean up temporary file
     os.remove(temp_output)
 
-    print(f"Video with screenshot overlay created: {output_video}")
+    logger.info(f"Video with screenshot overlay created: {output_video}")
 
 
 def run_command(command):
-    print(f"\nExecuting command: {' '.join(command) if isinstance(command, list) else command}")
+    logger.info(f"Executing command: {' '.join(command) if isinstance(command, list) else command}")
     try:
         if isinstance(command, list):
             process = subprocess.run(
@@ -80,47 +138,45 @@ def run_command(command):
         else:
             process = subprocess.run(
                 command, check=True, shell=True, capture_output=True, text=True)
-        print("Command executed successfully")
+        logger.info("Command executed successfully")
         return process.stdout
     except subprocess.CalledProcessError as e:
-        print(f"Command failed with return code {e.returncode}")
-        print("Command output:", e.stdout)
-        print("Command error:", e.stderr)
+        logger.error(f"Command failed with return code {e.returncode}")
+        logger.error(f"Command output: {e.stdout}")
+        logger.error(f"Command error: {e.stderr}")
         raise
 
 
 def get_duration(file_path):
-    print(f"\nGetting duration for file: {file_path}")
+    logger.info(f"Getting duration for file: {file_path}")
     command = f"ffprobe -i \"{file_path}\" -show_entries format=duration -v quiet -of csv=\"p=0\""
     duration = float(run_command(command))
-    print(f"Duration: {duration} seconds")
+    logger.info(f"Duration: {duration} seconds")
     return int(duration)
 
 
 def transcribe_audio(audio_path, working_directory):
     audio_basename = os.path.splitext(os.path.basename(audio_path))[0]
     subtitle_path = os.path.join(working_directory, f"{audio_basename}.srt")
-    print(f"\nTranscribing audio to {subtitle_path}...")
+    logger.info(f"Transcribing audio to {subtitle_path}...")
 
     try:
-        print("Loading Whisper model...")
-        model = WhisperModel("base", device="auto", compute_type="auto")
-
-        print("Transcribing audio...")
+        model = initialize_whisper_model()
+        logger.info("Transcribing audio...")
         segments, info = model.transcribe(audio_path, word_timestamps=True)
 
-        print("Generating SRT with one word per line...")
+        logger.info("Generating SRT with one word per line...")
         srt_content = generate_word_level_srt(segments)
 
-        print("Writing SRT file...")
+        logger.info("Writing SRT file...")
         with open(subtitle_path, "w", encoding="utf-8") as srt_file:
             srt_file.write(srt_content)
 
-        print(f"Transcription completed. Subtitle file saved at {subtitle_path}")
+        logger.info(f"Transcription completed. Subtitle file saved at {subtitle_path}")
         return subtitle_path
 
     except Exception as e:
-        print(f"An error occurred during transcription: {str(e)}")
+        logger.error(f"An error occurred during transcription: {str(e)}")
         raise
 
 
@@ -147,19 +203,19 @@ def format_timestamp(seconds):
 
 
 def calculate_start_time(audio_duration, video_duration):
-    print("\nCalculating random start time...")
+    logger.info("Calculating random start time...")
     if video_duration <= 0:
         raise ValueError("Video duration is zero or negative")
     max_start = video_duration - audio_duration
     if max_start < 0:
         raise ValueError("Video is shorter than the audio.")
     start_time = random.randint(0, max_start)
-    print(f"Random start time: {start_time} seconds")
+    logger.info(f"Random start time: {start_time} seconds")
     return start_time
 
 
 def extract_clip_and_add_audio(video_path, audio_path, start_time, audio_duration, working_directory):
-    print("\nExtracting clip and adding audio...")
+    logger.info("Extracting clip and adding audio...")
     temp_video = os.path.join(working_directory, "temp_video.mp4")
     command = [
         "ffmpeg",
@@ -185,12 +241,12 @@ def extract_clip_and_add_audio(video_path, audio_path, start_time, audio_duratio
     ]
 
     run_command(command)
-    print(f"Temporary video created: {temp_video}")
+    logger.info(f"Temporary video created: {temp_video}")
     return temp_video
 
 
 def burn_subtitles(temp_video, subtitle_path, output_video):
-    print("\nBurning subtitles into video...")
+    logger.info("Burning subtitles into video...")
     command = [
         "ffmpeg",
         "-vaapi_device", "/dev/dri/renderD128",
@@ -205,49 +261,59 @@ def burn_subtitles(temp_video, subtitle_path, output_video):
         output_video
     ]
     run_command(command)
-    print(f"Final video created: {output_video}")
+    logger.info(f"Final video created: {output_video}")
 
 
 def process_video(working_directory, audio_path, counter=1):
     try:
-        video_path = "/videos/output.mp4"
-        print("\n--- Starting video processing ---")
+        if not os.path.isfile(audio_path):
+            logger.error(f"Audio file not found: {audio_path}")
+            return None  # Exit the function early if the file is missing
+
+        title_file = Path(working_directory) / f"title_{counter}.txt"
+        # Check if the title file exists before proceeding
+        if not title_file.exists():
+            logger.error(f"Title file not found: {title_file}")
+            return None
+
+        with open(title_file, "r") as f:
+            safe_title = f.read().strip()
+
+        video_path = VIDEO_SOURCE_PATH
+        logger.info("Starting video processing...")
+
+        # Use generic names for intermediate files
+        subtitle_path = os.path.join(working_directory, f"temp_subtitles_{counter}.srt")
+        temp_video = os.path.join(working_directory, f"temp_video_{counter}.mp4")
+        output_video_with_subs = os.path.join(working_directory, f"temp_with_subs_{counter}.mp4")
+        screenshot_path = os.path.join(working_directory, f"reddit_post_screenshot_{counter}.png")
+        
+        # Only use the title for the final output
+        final_output_video = os.path.join(final_dir, f"{safe_title}.mp4")
 
         subtitle_path = transcribe_audio(audio_path, working_directory)
-
         audio_duration = get_duration(audio_path)
         video_duration = get_duration(video_path)
-
         start_time = calculate_start_time(audio_duration, video_duration)
 
         temp_video = extract_clip_and_add_audio(
             video_path, audio_path, start_time, audio_duration, working_directory)
 
-        output_video_with_subs = os.path.join(
-            working_directory, f"output_video_with_subs_{counter}.mp4")
         burn_subtitles(temp_video, subtitle_path, output_video_with_subs)
+        overlay_screenshot(output_video_with_subs, screenshot_path, final_output_video)
 
-        # Add screenshot overlay
-        screenshot_path = os.path.join(
-            working_directory, f"reddit_post_screenshot_{counter}.png")
-        final_output_video = os.path.join(
-            working_directory, f"final_output_video_{counter}.mp4")
-        overlay_screenshot(output_video_with_subs,
-                           screenshot_path, final_output_video)
-
-        print("\nCleaning up temporary files...")
+        logger.info("Cleaning up temporary files...")
         os.remove(temp_video)
         os.remove(output_video_with_subs)
-        print(f"Process completed. Final output file: {final_output_video}")
+        os.remove(title_file)  # Clean up the title file
+        logger.info(f"Process completed. Final output file: {final_output_video}")
 
+        # Add the final path to our list
+        final_video_paths.append(final_output_video)
         return final_output_video
 
     except Exception as e:
-        print(f"\nAn error occurred during video processing: {str(e)}")
-        return None
-
-    except Exception as e:
-        print(f"\nAn error occurred during video processing: {str(e)}")
+        logger.error(f"An error occurred during video processing: {str(e)}")
         return None
 
 
@@ -255,81 +321,91 @@ def process_video(working_directory, audio_path, counter=1):
 aitah_counter = 1
 
 
-def redditpost_to_text(url):
+def initialize_sb():
+    return SB(uc=True, user_data_dir=CHROME_USER_DATA_DIR, headless=True)
+
+
+def redditpost_to_text(url, sb):
     global aitah_counter
-    global output_dir  # Ensure that this is defined somewhere as a Path object
-    # Make sure this is set to an appropriate path
-    output_dir = Path(output_dir)
+    global output_dir
 
-    with SB(uc=True, user_data_dir="/home/pdaloxd/.config/google-chrome/Default", headless=True) as sb:
-        sb.open(url)
+    logger.info(f"Opening URL: {url}")
+    sb.open(url)
 
-        # Assuming h1 contains the post title
-        post_title = sb.get_text("h1")
-        # Assuming this class correctly identifies the main text of the post
-        post_text = sb.get_text("div[class='md text-14']")
+    post_title = sb.get_text("h1")
+    post_text = sb.get_text("div[class='md text-14']")
 
-        # Save text to file
-        filename = output_dir / f"reddit_post_aitah_{aitah_counter}.txt"
-        with open(filename, "w") as f:
-            f.write(post_title + "\n===\n" + post_text + "\n")
-        aitah_counter += 1  # Increment the file counter for next use
+    # Create a safe filename from the title
+    safe_title = "".join(c for c in post_title if c.isalnum() or c in (' ', '-', '_')).rstrip()
+    safe_title = safe_title[:100]  # Limit length to avoid too long filenames
 
-        # Return combined title and text for TTS
-        return substitute_acronyms(post_title + " " + post_text)
+    # Save text to file
+    filename = output_dir / f"{safe_title}_{aitah_counter}.txt"
+    with open(filename, "w") as f:
+        f.write(post_title + "\n===\n" + post_text + "\n")
+    logger.info(f"Saved post text to {filename}")
+    aitah_counter += 1
 
-
-def select_reddit_post(subreddit_url, posts_number=1):
-    with SB(uc=True, user_data_dir="/home/pdaloxd/.config/google-chrome/Default", headless=True) as sb:
-        sb.open(subreddit_url)
-        unique_links = []  # Using a list to maintain order
-        last_length = 0
-        screenshot_counter = 1
-
-        # Continue until we collect the required number of unique posts
-        while len(unique_links) < posts_number:
-            post_links_elements = sb.find_elements(
-                "article", limit=posts_number)  # Using a simple CSS selector
-            for elem in post_links_elements:
-                link_element = elem.find_element(
-                    by="css selector", value="a[href*='/r/AITAH/comments/']:first-child")
-                href = link_element.get_attribute('href')
-                if href not in unique_links:  # Check to avoid duplicates
-                    unique_links.append(href)
-                    # Take a screenshot of the article element which is the post preview
-                    screenshot_path = output_dir / \
-                        f"reddit_post_screenshot_{screenshot_counter}.png"
-                    elem.screenshot(str(screenshot_path))
-                    print(f"Screenshot saved: {screenshot_path}")
-                    screenshot_counter += 1
-
-            # Check if new links have been added
-            if last_length == len(unique_links):
-                sb.execute_script(
-                    "window.scrollTo(0, document.body.scrollHeight);")
-                sb.sleep(2)  # Wait for more posts to load
-            last_length = len(unique_links)
-
-            if sb.get_current_url().endswith('#'):
-                print("Reached the end of the page or no new posts are loading.")
-                break
-
-        print("Unique Post Links:", unique_links[:posts_number])
-        return unique_links[:posts_number]
+    # Return title and combined text for TTS
+    return {
+        'title': safe_title,
+        'text': substitute_acronyms(post_title + " " + post_text)
+    }
 
 
-def get_reddit_post_text(subreddit_url, posts_number=1):
-    post_links = select_reddit_post(subreddit_url, posts_number)
-    texts = []
+def select_reddit_post(subreddit_url, sb, posts_number=1):
+    logger.info(f"Opening subreddit: {subreddit_url}")
+    sb.open(subreddit_url)
+    unique_links = []  # Using a list to maintain order
+    last_length = 0
+    screenshot_counter = 1
+
+    # Continue until we collect the required number of unique posts
+    while len(unique_links) < posts_number:
+        post_links_elements = sb.find_elements(
+            "article", limit=posts_number)  # Using a simple CSS selector
+        for elem in post_links_elements:
+            link_element = elem.find_element(
+                by="css selector", value="a[href*='/r/AITAH/comments/']:first-child")
+            href = link_element.get_attribute('href')
+            if href not in unique_links:  # Check to avoid duplicates
+                unique_links.append(href)
+                # Take a screenshot of the article element which is the post preview
+                screenshot_path = output_dir / \
+                    f"reddit_post_screenshot_{screenshot_counter}.png"
+                elem.screenshot(str(screenshot_path))
+                logger.info(f"Screenshot saved: {screenshot_path}")
+                screenshot_counter += 1
+
+        # Check if new links have been added
+        if last_length == len(unique_links):
+            sb.execute_script(
+                "window.scrollTo(0, document.body.scrollHeight);")
+            sb.sleep(2)  # Wait for more posts to load
+        last_length = len(unique_links)
+
+        if sb.get_current_url().endswith('#'):
+            logger.info("Reached the end of the page or no new posts are loading.")
+            break
+
+    logger.info(f"Found {len(unique_links[:posts_number])} unique post links")
+    return unique_links[:posts_number]
+
+
+def get_reddit_post_text(subreddit_url, sb, posts_number=1):
+    post_links = select_reddit_post(subreddit_url, sb, posts_number)
+    posts = []
     for post_link in post_links:
-        text = redditpost_to_text(post_link)
-        texts.append(text)
-    return texts
+        post_data = redditpost_to_text(post_link, sb)
+        posts.append(post_data)
+    return posts
 
 
 def gen_voice(text, language, output_file_name="example.wav"):
     text = html.unescape(text)
-    output_file_path = output_dir / output_file_name
+    # Use consistent naming pattern: aitah_audio_{number}.wav
+    output_file_path = output_dir / f"aitah_audio_{output_file_name}"
+    logger.info(f"Generating speech for output file: {output_file_path}")
     tts.tts_to_file(
         text=text,
         speed=2,
@@ -337,14 +413,20 @@ def gen_voice(text, language, output_file_name="example.wav"):
         speaker_wav=["voices/xd.wav"],
         language=language
     )
-    print(f"Generated speech saved to {output_file_path}")
+    logger.info(f"Generated speech saved to {output_file_path}")
 
 
-def generate_aitah_audio(subreddit_url="https://www.reddit.com/r/AITAH/top/?t=hour", language="en"):
-    post_texts = get_reddit_post_text(subreddit_url, NUM_VIDEOS_TO_GENERATE)
-    for i, post_text in enumerate(post_texts):
-        output_file_name = f"aitah_audio_{i + 1}.wav"
-        gen_voice(post_text, language, output_file_name)
+def generate_aitah_audio(sb, subreddit_url=SUBREDDIT_DEFAULT_URL, language="en"):
+    logger.info("Starting AITAH audio generation...")
+    posts = get_reddit_post_text(subreddit_url, sb, NUM_VIDEOS_TO_GENERATE)
+    for i, post in enumerate(posts, 1):
+        # Use consistent naming pattern
+        output_file_name = f"{i}.wav"  # This will become aitah_audio_1.wav, etc.
+        gen_voice(post['text'], language, output_file_name)
+        # Store the title for later use
+        title_file = output_dir / f"title_{i}.txt"
+        with open(title_file, "w") as f:
+            f.write(post['title'])
 
 
 def substitute_acronyms(text):
@@ -390,14 +472,129 @@ def substitute_acronyms(text):
     return '\n'.join(line.strip() for line in processed_lines)
 
 
-# Load the TTS model
+# ... existing imports and code ...
+
+def authenticate_with_cookies_file(driver, cookies_file_path: str):
+    """
+    Authenticates a browser session using a cookies.txt file in Netscape format
+    
+    Args:
+        driver: Selenium WebDriver instance
+        cookies_file_path (str): Path to the cookies.txt file
+    
+    Returns:
+        WebDriver: The authenticated driver instance
+    """
+    # Load cookies from file
+    with open(cookies_file_path, "r", encoding="utf-8") as file:
+        lines = file.read().split("\n")
+    
+    # Parse cookies
+    cookies = []
+    for line in lines:
+        split = line.split('\t')
+        if len(split) < 6:
+            continue
+
+        split = [x.strip() for x in split]
+        
+        try:
+            split[4] = int(split[4])
+        except ValueError:
+            split[4] = None
+
+        cookie = {
+            'name': split[5],
+            'value': split[6],
+            'domain': split[0],
+            'path': split[2],
+        }
+        
+        if split[4]:
+            cookie['expiry'] = split[4]
+            
+        cookies.append(cookie)
+    
+    # Navigate to TikTok main page
+    driver.open('https://www.tiktok.com')
+    # Wait for page to load
+    # Add cookies to browser session
+    for cookie in cookies:
+        try:
+            driver.add_cookie(cookie)
+        except Exception as e:
+            logger.error('Failed to add cookie %s: %s', cookie, str(e))
+    
+    # Refresh page to apply cookies
+    driver.refresh()
+    
+    return driver
+
+def upload_to_tiktok(videos_paths, cookies_path='cookies.txt', sb=None):
+    if sb is None:
+        sb = initialize_sb()
+    authenticate_with_cookies_file(sb, cookies_path)
+    
+    for video_path in videos_paths:
+        # Navigate to upload page
+        sb.open('https://www.tiktok.com/upload')
+        
+        # Wait for the upload container to be present
+        sb.wait_for_element_present("css selector", "div.upload-card.before-upload-new-stage")
+        
+        # Show hidden file choosers
+        sb.show_file_choosers()
+        
+        # Find and use the file input
+        file_input = 'input[type="file"]'
+        sb.choose_file(file_input, video_path)
+        
+        # Wait for upload to complete
+        sb.wait_for_element_not_present("css selector", ".upload-loading", timeout=60)
+        
+        # Add description and tags
+        caption_input = "div[contenteditable='true']"
+        sb.wait_for_element_present("css selector", caption_input)
+        
+        # First add the description
+        description = "\nFollow for more AITA stories!"
+        sb.send_keys(caption_input, description)
+        
+        # Then add each tag individually
+        tags = ["aita", "AITAH", "reddit", "redditstories", "storytime", "minecraft", "relationship", "storytime"]
+        for tag in tags:
+            sb.send_keys(caption_input, f" #{tag}")
+            # Wait for hashtag suggestion container and first suggestion
+            sb.wait_for_element_present("css selector", "div.jsx-510587813 > span", timeout=10)
+            sb.sleep(1)  # Small delay to ensure suggestion is fully loaded
+            sb.send_keys(caption_input, Keys.ENTER)
+            sb.sleep(0.5)  # Small delay between tags
+        
+        # Find and click the Post button
+        post_button = "button.TUXButton.TUXButton--default.TUXButton--large.TUXButton--primary"
+        sb.wait_for_element_clickable(post_button)
+        sb.click(post_button)
+        
+        # Wait for upload confirmation modal
+        sb.wait_for_element_present("css selector", "div.jsx-1540291114.common-modal-header", timeout=120)
+
+
+logger.info("Loading TTS model...")
 tts = TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2").to(
     torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+# Add this near the bottom of the file with other initializations
+initialize_whisper_model()  # Initialize the model when the script starts
 
 # Example usage
-generate_aitah_audio()  # Automatically fetches top posts from AITAH and generates audio
-
-# Replace the commented-out for loop with this:
-for i in range(1, NUM_VIDEOS_TO_GENERATE + 1):
-    audio_path = output_dir / f"aitah_audio_{i}.wav"
-    process_video(str(output_dir), str(audio_path), i)
+logger.info("Starting AITAH audio generation process...")
+with initialize_sb() as sb:
+    generate_aitah_audio(sb)
+    
+    for i in range(1, NUM_VIDEOS_TO_GENERATE + 1):
+        # Use the same naming pattern as in gen_voice
+        audio_path = output_dir / f"aitah_audio_{i}.wav"
+        process_video(str(output_dir), str(audio_path), i)
+    # If you're uploading to TikTok, do it in the same session
+    if final_video_paths:
+        with SB(uc=True, user_data_dir=CHROME_USER_DATA_DIR, headless=False) as sb1:
+            upload_to_tiktok(final_video_paths, 'cookies.txt', sb1)

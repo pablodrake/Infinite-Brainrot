@@ -24,10 +24,10 @@ final_video_paths = []
 
 # Video encoding settings
 VIDEO_ENCODING = {
-    'QP': '23',
-    'BITRATE': '5M',
-    'MAXRATE': '5M',
-    'BUFSIZE': '10M'
+    'QP': '18',
+    'BITRATE': '8M',
+    'MAXRATE': '10M',
+    'BUFSIZE': '16M'
 }
 
 # Subtitle styling
@@ -97,7 +97,7 @@ def overlay_screenshot(input_video, screenshot_path, output_video):
         "-map", "0:a",
         "-c:v", "libx264",
         "-preset", "ultrafast",
-        "-crf", "23",
+        "-crf", "18",
         "-c:a", "copy",
         temp_output,
         "-y"
@@ -113,10 +113,10 @@ def overlay_screenshot(input_video, screenshot_path, output_video):
         "-i", temp_output,
         "-vf", "format=nv12,hwupload",
         "-c:v", "h264_vaapi",
-        "-qp", "23",
-        "-b:v", "5M",
-        "-maxrate", "5M",
-        "-bufsize", "10M",
+        "-qp", "18",
+        "-b:v", "8M",
+        "-maxrate", "10M",
+        "-bufsize", "16M",
         "-c:a", "copy",
         output_video,
         "-y"
@@ -228,10 +228,10 @@ def extract_clip_and_add_audio(video_path, audio_path, start_time, audio_duratio
         "-map", "[v]",
         "-map", "1:a",
         "-c:v", "h264_vaapi",
-        "-qp", "23",
-        "-b:v", "5M",
-        "-maxrate", "5M",
-        "-bufsize", "10M",
+        "-qp", "18",
+        "-b:v", "8M",
+        "-maxrate", "10M",
+        "-bufsize", "16M",
         "-c:a", "aac",
         "-ac", "2",
         "-ar", "44100",
@@ -253,10 +253,10 @@ def burn_subtitles(temp_video, subtitle_path, output_video):
         "-i", temp_video,
         "-vf", f"subtitles={subtitle_path}:force_style='Fontsize=24,Alignment=10,MarginV=50,PrimaryColour=&H00FFFF&,OutlineColour=&H000000&,BorderStyle=1,Outline=2':fontsdir=/path/to/fonts,format=nv12,hwupload",
         "-c:v", "h264_vaapi",
-        "-qp", "20",
-        "-b:v", "5M",
-        "-maxrate", "5M",
-        "-bufsize", "10M",
+        "-qp", "18",
+        "-b:v", "8M",
+        "-maxrate", "10M",
+        "-bufsize", "16M",
         "-c:a", "copy",
         output_video
     ]
@@ -561,7 +561,7 @@ def upload_to_tiktok(videos_paths, cookies_path='cookies.txt', sb=None):
         sb.send_keys(caption_input, description)
         
         # Then add each tag individually
-        tags = ["aita", "AITAH", "reddit", "redditstories", "storytime", "minecraft", "relationship", "storytime"]
+        tags = ["aita", "AITAH", "reddit", "redditstories", "storytime", "minecraft", "relationship", "reddit_tiktok", "minecraftmemes"]
         for tag in tags:
             sb.send_keys(caption_input, f" #{tag}")
             # Wait for hashtag suggestion container and first suggestion
@@ -594,7 +594,9 @@ with initialize_sb() as sb:
         # Use the same naming pattern as in gen_voice
         audio_path = output_dir / f"aitah_audio_{i}.wav"
         process_video(str(output_dir), str(audio_path), i)
-    # If you're uploading to TikTok, do it in the same session
-    if final_video_paths:
-        with SB(uc=True, user_data_dir=CHROME_USER_DATA_DIR, headless=False) as sb1:
-            upload_to_tiktok(final_video_paths, 'cookies.txt', sb1)
+
+if final_dir.exists():
+    final_video_paths = [str(p) for p in final_dir.glob("*.mp4")]
+    logger.info(f"Found {len(final_video_paths)} videos in {final_dir}")
+    with SB(uc=True, user_data_dir=CHROME_USER_DATA_DIR, headless=False) as sb1:
+        upload_to_tiktok(final_video_paths, 'cookies.txt', sb1)

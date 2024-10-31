@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class TikTokVideo:
     """Data class to hold video information"""
     file_path: str
-    description: str
+    description_: str
     tags: List[str]
 
     @property
@@ -85,7 +85,7 @@ class TikTokUploader:
         
         return driver
 
-    def upload_to_tiktok(self, videos: List[TikTokVideo], sb: Optional[SB] = None):
+    def upload_to_tiktok(self, videos: List[TikTokVideo], sb: Optional[SB] = None, description: Optional[str] = None):
         """
         Uploads videos to TikTok using browser automation
         
@@ -121,7 +121,10 @@ class TikTokUploader:
                 sb.wait_for_element_present("css selector", caption_input)
                 
                 # Add the title and description
-                full_text = f"{video.title}\n{video.description}"
+                if description is not None:
+                    full_text = f"{video.title}\n{description}"
+                else:
+                    full_text = f"{video.title}\n{video.description_}"
                 sb.send_keys(caption_input, full_text)
                 
                 # Add tags

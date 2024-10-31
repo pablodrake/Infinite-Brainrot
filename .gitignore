@@ -4,3 +4,4 @@ cookies.txt
 video_generation.log
 downloaded_files/*
 output/*
+processed_posts.json

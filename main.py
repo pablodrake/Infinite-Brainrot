@@ -12,12 +12,13 @@ import random
 from faster_whisper import WhisperModel
 import logging
 from selenium.webdriver.common.keys import Keys
+from pytok import upload_to_tiktok
 
 # Constants
-NUM_VIDEOS_TO_GENERATE = 5
+NUM_VIDEOS_TO_GENERATE = 10
 VIDEO_SOURCE_PATH = "./videos/minecraft.mp4"
 CHROME_USER_DATA_DIR = "/home/pdaloxd/.config/google-chrome/Default"
-SUBREDDIT_DEFAULT_URL = "https://www.reddit.com/r/AITAH/rising/"
+SUBREDDIT_DEFAULT_URL = "https://www.reddit.com/r/AITAH/hot/"
 VAAPI_DEVICE = "/dev/dri/renderD128"
 WHISPER_MODEL = None
 final_video_paths = []
@@ -471,132 +472,32 @@ def substitute_acronyms(text):
 
     return '\n'.join(line.strip() for line in processed_lines)
 
-
-# ... existing imports and code ...
-
-def authenticate_with_cookies_file(driver, cookies_file_path: str):
-    """
-    Authenticates a browser session using a cookies.txt file in Netscape format
+if __name__ == "__main__":
+    import sys
     
-    Args:
-        driver: Selenium WebDriver instance
-        cookies_file_path (str): Path to the cookies.txt file
-    
-    Returns:
-        WebDriver: The authenticated driver instance
-    """
-    # Load cookies from file
-    with open(cookies_file_path, "r", encoding="utf-8") as file:
-        lines = file.read().split("\n")
-    
-    # Parse cookies
-    cookies = []
-    for line in lines:
-        split = line.split('\t')
-        if len(split) < 6:
-            continue
+    if len(sys.argv) > 1 and sys.argv[1] == "generate":
+        logger.info("Loading TTS model...")
+        tts = TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2").to(
+            torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
+        initialize_whisper_model()  # Initialize the model when the script starts
 
-        split = [x.strip() for x in split]
-        
-        try:
-            split[4] = int(split[4])
-        except ValueError:
-            split[4] = None
-
-        cookie = {
-            'name': split[5],
-            'value': split[6],
-            'domain': split[0],
-            'path': split[2],
-        }
-        
-        if split[4]:
-            cookie['expiry'] = split[4]
+        logger.info("Starting AITAH audio generation process...")
+        with initialize_sb() as sb:
+            generate_aitah_audio(sb)
             
-        cookies.append(cookie)
-    
-    # Navigate to TikTok main page
-    driver.open('https://www.tiktok.com')
-    # Wait for page to load
-    # Add cookies to browser session
-    for cookie in cookies:
-        try:
-            driver.add_cookie(cookie)
-        except Exception as e:
-            logger.error('Failed to add cookie %s: %s', cookie, str(e))
-    
-    # Refresh page to apply cookies
-    driver.refresh()
-    
-    return driver
+            for i in range(1, NUM_VIDEOS_TO_GENERATE + 1):
+                audio_path = output_dir / f"aitah_audio_{i}.wav"
+                process_video(str(output_dir), str(audio_path), i)
 
-def upload_to_tiktok(videos_paths, cookies_path='cookies.txt', sb=None):
-    if sb is None:
-        sb = initialize_sb()
-    authenticate_with_cookies_file(sb, cookies_path)
-    
-    for video_path in videos_paths:
-        # Navigate to upload page
-        sb.open('https://www.tiktok.com/upload')
-        
-        # Wait for the upload container to be present
-        sb.wait_for_element_present("css selector", "div.upload-card.before-upload-new-stage")
-        
-        # Show hidden file choosers
-        sb.show_file_choosers()
-        
-        # Find and use the file input
-        file_input = 'input[type="file"]'
-        sb.choose_file(file_input, video_path)
-        
-        # Wait for upload to complete
-        sb.wait_for_element_not_present("css selector", ".upload-loading", timeout=60)
-        
-        # Add description and tags
-        caption_input = "div[contenteditable='true']"
-        sb.wait_for_element_present("css selector", caption_input)
-        
-        # First add the description
-        description = "\nFollow for more AITA stories!"
-        sb.send_keys(caption_input, description)
-        
-        # Then add each tag individually
-        tags = ["aita", "AITAH", "reddit", "redditstories", "storytime", "minecraft", "relationship", "reddit_tiktok", "minecraftmemes"]
-        for tag in tags:
-            sb.send_keys(caption_input, f" #{tag}")
-            # Wait for hashtag suggestion container and first suggestion
-            sb.wait_for_element_present("css selector", "div.jsx-510587813 > span", timeout=10)
-            sb.sleep(1)  # Small delay to ensure suggestion is fully loaded
-            sb.send_keys(caption_input, Keys.ENTER)
-            sb.sleep(0.5)  # Small delay between tags
-        
-        # Find and click the Post button
-        post_button = "button.TUXButton.TUXButton--default.TUXButton--large.TUXButton--primary"
-        sb.wait_for_element_clickable(post_button)
-        sb.click(post_button)
-        
-        # Wait for upload confirmation modal
-        sb.wait_for_element_present("css selector", "div.jsx-1540291114.common-modal-header", timeout=120)
-
-
-logger.info("Loading TTS model...")
-tts = TTS(model_name="tts_models/multilingual/multi-dataset/xtts_v2").to(
-    torch.device('cuda' if torch.cuda.is_available() else 'cpu'))
-# Add this near the bottom of the file with other initializations
-initialize_whisper_model()  # Initialize the model when the script starts
-
-# Example usage
-logger.info("Starting AITAH audio generation process...")
-with initialize_sb() as sb:
-    generate_aitah_audio(sb)
-    
-    for i in range(1, NUM_VIDEOS_TO_GENERATE + 1):
-        # Use the same naming pattern as in gen_voice
-        audio_path = output_dir / f"aitah_audio_{i}.wav"
-        process_video(str(output_dir), str(audio_path), i)
-
-if final_dir.exists():
-    final_video_paths = [str(p) for p in final_dir.glob("*.mp4")]
-    logger.info(f"Found {len(final_video_paths)} videos in {final_dir}")
-    with SB(uc=True, user_data_dir=CHROME_USER_DATA_DIR, headless=False) as sb1:
-        upload_to_tiktok(final_video_paths, 'cookies.txt', sb1)
+        if final_dir.exists():
+            final_video_paths = [str(p) for p in final_dir.glob("*.mp4")]
+            logger.info(f"Found {len(final_video_paths)} videos in {final_dir}")
+            with SB(uc=True, user_data_dir=CHROME_USER_DATA_DIR, headless=False) as sb1:
+                upload_to_tiktok(final_video_paths, 'cookies.txt', sb1)
+    elif len(sys.argv) > 1 and sys.argv[1] == "upload":
+        final_video_paths = [str(p) for p in final_dir.glob("*.mp4")]
+        logger.info(f"Found {len(final_video_paths)} videos in {final_dir}")
+        with SB(uc=True, user_data_dir=CHROME_USER_DATA_DIR, headless=False) as sb1:
+            upload_to_tiktok(final_video_paths, 'cookies.txt', sb1)
+    else:
+        logger.error("Invalid command. Use 'generate' to generate videos or 'upload' to upload videos.")

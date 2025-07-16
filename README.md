@@ -22,7 +22,7 @@ Infinite-Brainrot is an automated TikTok-style video creation tool that transfor
 
 1. Clone the repository:
    ```
-   git clone https://github.com/yourusername/Infinite-Brainrot.git
+   git clone https://github.com/pablodrake/Infinite-Brainrot.git
    cd Infinite-Brainrot
    ```
 
